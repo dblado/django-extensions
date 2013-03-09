@@ -26,8 +26,8 @@ class SlugField(StringField):
     def __init__(self, *args, **kwargs):
         kwargs['max_length'] = kwargs.get('max_length', 50)
         # Set db_index=True unless it's been set manually.
-        if 'db_index' not in kwargs:
-            kwargs['db_index'] = True
+        #if 'db_index' not in kwargs:
+        #    kwargs['db_index'] = True
         super(SlugField, self).__init__(*args, **kwargs)
 
     def get_internal_type(self):
@@ -61,8 +61,8 @@ class AutoSlugField(SlugField):
     http://www.djangosnippets.org/snippets/690/
     """
     def __init__(self, *args, **kwargs):
-        kwargs.setdefault('blank', True)
-        kwargs.setdefault('editable', False)
+        #kwargs.setdefault('blank', True)
+        #kwargs.setdefault('editable', False)
 
         populate_from = kwargs.pop('populate_from', None)
         if populate_from is None:
@@ -88,53 +88,45 @@ class AutoSlugField(SlugField):
     def slugify_func(self, content):
         return slugify(content)
 
-    def create_slug(self, model_instance, add):
+    def create_slug(self, model_instance, document):
         # get fields to populate from and slug field to set
         if not isinstance(self._populate_from, (list, tuple)):
-            self._populate_from = (self._populate_from, )
-        slug_field = model_instance._meta.get_field(self.attname)
+            self._populate_from = (self._populate_from,)
+        self._slug = getattr(document, self.name)
 
-        if add or self.overwrite:
+        if self._slug is None or self.overwrite:
             # slugify the original field content and set next step to 2
-            slug_for_field = lambda field: self.slugify_func(getattr(model_instance, field))
+            slug_for_field = lambda field: self.slugify_func(getattr(document, field))
             slug = self.separator.join(map(slug_for_field, self._populate_from))
             next = 2
         else:
-            # get slug from the current model instance and calculate next
-            # step from its number, clean-up
-            slug = self._slug_strip(getattr(model_instance, self.attname))
-            next = slug.split(self.separator)[-1]
-            if next.isdigit():
-                slug = self.separator.join(slug.split(self.separator)[:-1])
-                next = int(next)
-            else:
-                next = 2
+            # slug already exists, don't create a new one...return the current slug
+            return self._slug
 
         # strip slug depending on max_length attribute of the slug field
         # and clean-up
-        slug_len = slug_field.max_length
+        slug_len = self.max_length
         if slug_len:
             slug = slug[:slug_len]
         slug = self._slug_strip(slug)
         original_slug = slug
-
         # exclude the current model instance from the queryset used in finding
         # the next valid slug
-        queryset = model_instance.__class__._default_manager.all()
-        if model_instance.pk:
-            queryset = queryset.exclude(pk=model_instance.pk)
+        if document.pk:
+	        queryset = model_instance.objects(pk__ne=document.pk)
+        else:
+            queryset = model_instance.objects()
 
         # form a kwarg dict used to impliment any unique_together contraints
         kwargs = {}
-        for params in model_instance._meta.unique_together:
-            if self.attname in params:
-                for param in params:
-                    kwargs[param] = getattr(model_instance, param, None)
-        kwargs[self.attname] = slug
-
+        #for params in model_instance._meta.unique_together:
+        #    if self.attname in params:
+        #        for param in params:
+        #            kwargs[param] = getattr(model_instance, param, None)
+        kwargs[self.name] = slug
         # increases the number while searching for the next valid slug
         # depending on the given slug, clean-up
-        while not slug or queryset.filter(**kwargs):
+        while not slug or queryset.clone().filter(**kwargs):
             slug = original_slug
             end = '%s%s' % (self.separator, next)
             end_len = len(end)
@@ -142,13 +134,14 @@ class AutoSlugField(SlugField):
                 slug = slug[:slug_len - end_len]
                 slug = self._slug_strip(slug)
             slug = '%s%s' % (slug, end)
-            kwargs[self.attname] = slug
+            kwargs[self.name] = slug
             next += 1
         return slug
 
-    def pre_save(self, model_instance, add):
-        value = six.u(self.create_slug(model_instance, add))
-        setattr(model_instance, self.attname, value)
+#    def pre_save(self, model_instance, add):
+    def pre_save(self, sender, document, **kwargs):
+        value = unicode(self.create_slug(sender, document))
+        setattr(document, self.db_field, value)
         return value
 
     def get_internal_type(self):
@@ -177,9 +170,9 @@ class ModificationDateTimeField(CreationDateTimeField):
     Sets value to datetime.now() on each save of the model.
     """
 
-    def pre_save(self, model, add):
+    def pre_save(self, sender, document, **kwargs):
         value = datetime.datetime.now()
-        setattr(model, self.attname, value)
+        setattr(document, self.db_field, value)
         return value
 
     def get_internal_type(self):
